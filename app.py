@@ -1,18 +1,22 @@
 from flask import Flask, request, send_file
-import subprocess, uuid, os
+import subprocess
+import uuid
+import os
 
 app = Flask(__name__)
 
 LOGO_PATH = "logo.png"
 
+
 @app.route("/")
 def home():
     return "Watermark API çalışıyor"
 
+
 @app.route("/watermark", methods=["POST"])
 def watermark():
     if 'video' not in request.files:
-        return "Video yok", 400
+        return "Video dosyası bulunamadı", 400
 
     video = request.files['video']
 
@@ -21,19 +25,25 @@ def watermark():
 
     video.save(in_file)
 
+    # HIZLI FFmpeg (Make timeout yemez)
     cmd = [
         "ffmpeg",
+        "-y",
         "-i", in_file,
         "-i", LOGO_PATH,
         "-filter_complex",
-        "[1]format=rgba,colorchannelmixer=aa=0.6[logo];[0][logo]overlay=(main_w-overlay_w)/2:main_h-overlay_h-60",
-        "-codec:a", "copy",
+        "overlay=(main_w-overlay_w)/2:main_h-overlay_h-60",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-c:a", "copy",
         out_file
     ]
 
-    subprocess.run(cmd)
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     return send_file(out_file, as_attachment=True)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
