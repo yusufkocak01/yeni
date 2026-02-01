@@ -1,41 +1,28 @@
 from flask import Flask, request, send_file
-import subprocess
-import uuid
-import os
+import subprocess, uuid, os
 
 app = Flask(__name__)
+LOGO_PATH = "logo.png"
 
-@app.route("/")
+@app.route("/watermark", methods=["POST"])
+def watermark():
+    video = request.files['video']
+    in_file = f"/tmp/{uuid.uuid4()}.mp4"
+    out_file = f"/tmp/out_{uuid.uuid4()}.mp4"
 
-def home():
-    return "FFmpeg audio converter is running"
-
-@app.route("/convert", methods=["POST"])
-def convert():
-    if "file" not in request.files:
-        return "No file uploaded", 400
-
-    video = request.files["file"]
-
-    uid = str(uuid.uuid4())
-    input_path = f"/tmp/{uid}.mp4"
-    output_path = f"/tmp/{uid}.mp3"
-
-    video.save(input_path)
+    video.save(in_file)
 
     cmd = [
-        "ffmpeg",
-        "-i", input_path,
-        "-vn",
-        "-ar", "44100",
-        "-ac", "2",
-        "-b:a", "192k",
-        output_path
+        "ffmpeg", "-i", in_file, "-i", LOGO_PATH,
+        "-filter_complex",
+        "[1]format=rgba,colorchannelmixer=aa=0.6[logo];[0][logo]overlay=(main_w-overlay_w)/2:main_h-overlay_h-60",
+        "-codec:a", "copy",
+        out_file
     ]
 
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(cmd)
 
-    return send_file(output_path, as_attachment=True)
+    return send_file(out_file, as_attachment=True)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    app.run(host="0.0.0.0", port=8080)
