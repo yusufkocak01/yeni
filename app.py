@@ -9,6 +9,9 @@ CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
 
 @app.route("/upload", methods=["POST"])
 def upload():
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
     file = request.files["file"]
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/stream"
@@ -34,6 +37,3 @@ def upload():
         "uid": uid,
         "mp4": mp4_url
     })
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
