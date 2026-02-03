@@ -15,7 +15,7 @@ def process_and_upload(video_path, name):
         with open(logo_path, "wb") as f:
             f.write(r.content)
 
-        # 2. Watermark Bas (FFmpeg) - Hız için 'ultrafast' ekledik
+        # 2. Watermark Bas (Hız öncelikli ayar)
         output_path = video_path.replace(".mp4", "_out.mp4")
         ffmpeg_cmd = [
             "ffmpeg", "-i", video_path, "-i", logo_path,
@@ -31,21 +31,22 @@ def process_and_upload(video_path, name):
             files = {"file": (name, f, "video/mp4")}
             requests.post(url, headers=headers, files=files)
         
-        print(f"BAŞARILI: {name} yüklendi.")
+        print(f"BAŞARILI: {name} Cloudflare'a yüklendi.")
     except Exception as e:
-        print(f"HATA OLUŞTU: {str(e)}")
+        print(f"HATA DETAYI: {str(e)}")
 
 @app.route("/upload", methods=["POST"])
 def upload():
     if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "no file"}), 400
+        return jsonify({"status": "error", "message": "Dosya eksik"}), 400
 
     uploaded_file = request.files['file']
     temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     uploaded_file.save(temp_video.name)
 
-    # İşlemi arka planda başlat ve HEMEN cevap dön
+    # Arka planda çalıştır
     thread = threading.Thread(target=process_and_upload, args=(temp_video.name, uploaded_file.filename))
     thread.start()
 
-    return jsonify({"status": "accepted", "message": "Video işleme ve yükleme başladı."}), 202
+    # Make'e hemen cevap ver
+    return jsonify({"status": "accepted", "message": "İşlem arka planda başladı."}), 202
