@@ -1,49 +1,39 @@
-from flask import Flask, request, send_file
-import subprocess
-import uuid
+from flask import Flask, request, jsonify
+import requests
 import os
 
 app = Flask(__name__)
 
-LOGO_PATH = "logo.png"
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
 
+@app.route("/upload", methods=["POST"])
+def upload():
+    file = request.files["file"]
 
-@app.route("/")
-def home():
-    return "Watermark API çalışıyor"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/stream"
 
+    headers = {
+        "Authorization": f"Bearer {CF_API_TOKEN}"
+    }
 
-@app.route("/watermark", methods=["POST"])
-def watermark():
-    if 'video' not in request.files:
-        return "Video dosyası bulunamadı", 400
+    files = {
+        "file": (file.filename, file.stream, file.mimetype)
+    }
 
-    video = request.files['video']
+    response = requests.post(url, headers=headers, files=files)
+    data = response.json()
 
-    in_file = f"/tmp/{uuid.uuid4()}.mp4"
-    out_file = f"/tmp/out_{uuid.uuid4()}.mp4"
+    if not data.get("success"):
+        return jsonify(data), 400
 
-    video.save(in_file)
+    uid = data["result"]["uid"]
+    mp4_url = f"https://videodelivery.net/{uid}/downloads/default.mp4"
 
-    # HIZLI FFmpeg (Make timeout yemez)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", in_file,
-        "-i", LOGO_PATH,
-        "-filter_complex",
-        "overlay=(main_w-overlay_w)/2:main_h-overlay_h-60",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
-        "-c:a", "copy",
-        out_file
-    ]
-
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    return send_file(out_file, as_attachment=True)
-
+    return jsonify({
+        "uid": uid,
+        "mp4": mp4_url
+    })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=3000)
