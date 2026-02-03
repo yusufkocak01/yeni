@@ -1,39 +1,41 @@
 from flask import Flask, request, jsonify
+import tempfile
+import subprocess
 import requests
 import os
 
 app = Flask(__name__)
 
-CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
-CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
+LOGO_URL = "https://pub-10e9a156db6441a8a4692a69c2c8ed4d.r2.dev/logo.png"
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "file field missing"}), 400
 
-    file = request.files["file"]
+    uploaded_file = request.files['file']
 
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/stream"
+    if uploaded_file.filename == '':
+        return jsonify({"error": "empty filename"}), 400
 
-    headers = {
-        "Authorization": f"Bearer {CF_API_TOKEN}"
-    }
+    temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    uploaded_file.save(temp_video.name)
 
-    files = {
-        "file": (file.filename, file.stream, file.mimetype)
-    }
+    logo_path = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
+    r = requests.get(LOGO_URL)
+    with open(logo_path, "wb") as f:
+        f.write(r.content)
 
-    response = requests.post(url, headers=headers, files=files)
-    data = response.json()
+    output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
 
-    if not data.get("success"):
-        return jsonify(data), 400
+    cmd = [
+        "ffmpeg",
+        "-i", temp_video.name,
+        "-i", logo_path,
+        "-filter_complex", "overlay=10:10",
+        "-codec:a", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True)
 
-    uid = data["result"]["uid"]
-    mp4_url = f"https://videodelivery.net/{uid}/downloads/default.mp4"
-
-    return jsonify({
-        "uid": uid,
-        "mp4": mp4_url
-    })
+    return jsonify({"status": "ok"})
