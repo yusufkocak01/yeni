@@ -16,33 +16,39 @@ def process_and_upload(video_path, name):
 
         output_path = video_path.replace(".mp4", "_out.mp4")
 
-        # YENİ FFmpeg KOMUTU:
-        # [1:v]scale=iw/2:-1 -> Logoyu ana video genişliğinin yarısına indirir.
-        # overlay=(W-w)/2:H-h-150 -> Yatayda tam orta, dikeyde en alttan 150px yukarı.
+        # GÜVENLİ VE KESİN FFmpeg KOMUTU:
+        # [0:v] ana video, [1:v] logo.
+        # 'scale' filtresinde iw/2 diyerek ana videonun genişliğini baz alıyoruz.
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
             "-i", logo_path,
             "-filter_complex", 
-            "[1:v]scale=main_w/2:-1[l];[0:v][l]overlay=(main_w-overlay_w)/2:main_h-overlay_h-150",
+            "[0:v]setpts=PTS-STARTPTS[v];[1:v]scale=iw/2:-1[l];[v][l]overlay=(W-w)/2:H-h-150",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-c:a", "copy",
             output_path
         ]
         
-        subprocess.run(ffmpeg_cmd, check=True)
+        # Hata durumunu loglara basmak için check=True kullanıyoruz
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("FFmpeg Hatası:", result.stderr)
+            return
 
+        # Cloudflare Yükleme
         url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/stream"
         headers = {"Authorization": f"Bearer {CF_TOKEN}"}
         with open(output_path, "rb") as f:
             files = {"file": (name, f, "video/mp4")}
-            requests.post(url, headers=headers, files=files)
+            cf_response = requests.post(url, headers=headers, files=files)
+            print("Cloudflare Yanıtı:", cf_response.text)
         
-        print(f"BAŞARILI: {name} düzeltilmiş logo ile yüklendi.")
+        print(f"BAŞARILI: {name} yüklendi.")
         
     except Exception as e:
-        print(f"HATA: {str(e)}")
+        print(f"SİSTEM HATASI: {str(e)}")
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -51,5 +57,6 @@ def upload():
     uploaded_file = request.files['file']
     temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     uploaded_file.save(temp_video.name)
+    
     threading.Thread(target=process_and_upload, args=(temp_video.name, uploaded_file.filename)).start()
     return jsonify({"status": "accepted"}), 202
