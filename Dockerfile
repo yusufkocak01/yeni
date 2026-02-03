@@ -7,4 +7,4 @@ RUN apt-get update && \
 WORKDIR /app
 COPY . .
 
-CMD gunicorn -b 0.0.0.0:$PORT main:app
+CMD gunicorn --timeout 600 -b 0.0.0.0:$PORT main:app
