@@ -20,45 +20,33 @@ s3 = boto3.client(
     region_name="auto",
 )
 
-# Google Drive GERÇEK dosya indirme
-def download_drive(file_id, path):
-    url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download"
-
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-
 @app.route("/transfer", methods=["POST"])
 def transfer_video():
     data = request.json
-    file_id = data.get("file_id")
+    download_url = data.get("download_url")
     file_name = data.get("name", "video.mp4")
 
-    if not file_id:
-        return jsonify({"status": "error", "message": "file_id eksik"}), 400
+    if not download_url:
+        return jsonify({"error": "download_url eksik"}), 400
 
     try:
-        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
-        r2_key = f"uploads/{safe_name}"
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
+        r2_key = f"uploads/{safe}"
 
-        # Geçici dosya
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tmp_path = tmp.name
         tmp.close()
 
-        # Drive'dan GERÇEK mp4 indir
-        download_drive(file_id, tmp_path)
+        # Google'dan GERÇEK dosya indir
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in r.iter_content(1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
 
-        # R2'ye yükle
-        s3.upload_file(
-            tmp_path,
-            R2_BUCKET_NAME,
-            r2_key,
-            ExtraArgs={"ContentType": "video/mp4"},
-        )
+        s3.upload_file(tmp_path, R2_BUCKET_NAME, r2_key,
+                       ExtraArgs={"ContentType": "video/mp4"})
 
         os.unlink(tmp_path)
 
@@ -71,4 +59,3 @@ def transfer_video():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
