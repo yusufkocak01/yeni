@@ -1,7 +1,5 @@
 import os
 import boto3
-import requests
-import tempfile
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -20,41 +18,19 @@ s3 = boto3.client(
     region_name="auto",
 )
 
-@app.route("/transfer", methods=["POST"])
-def transfer_video():
-    data = request.json
-    download_url = data.get("download_url")
-    file_name = data.get("name", "video.mp4")
+@app.route("/upload", methods=["POST"])
+def upload():
+    file = request.files["file"]
+    filename = file.filename
 
-    if not download_url:
-        return jsonify({"error": "download_url eksik"}), 400
+    key = f"uploads/{filename}"
 
-    try:
-        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
-        r2_key = f"uploads/{safe}"
+    s3.upload_fileobj(file, R2_BUCKET_NAME, key,
+                      ExtraArgs={"ContentType": "video/mp4"})
 
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        tmp_path = tmp.name
-        tmp.close()
+    url = f"{R2_PUBLIC_DOMAIN.rstrip('/')}/{key}"
 
-        # Google'dan GERÇEK dosya indir
-        with requests.get(download_url, stream=True) as r:
-            r.raise_for_status()
-            with open(tmp_path, "wb") as f:
-                for chunk in r.iter_content(1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-
-        s3.upload_file(tmp_path, R2_BUCKET_NAME, r2_key,
-                       ExtraArgs={"ContentType": "video/mp4"})
-
-        os.unlink(tmp_path)
-
-        url = f"{R2_PUBLIC_DOMAIN.rstrip('/')}/{r2_key}"
-        return jsonify({"status": "success", "video_url": url}), 200
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"video_url": url}), 200
 
 
 if __name__ == "__main__":
