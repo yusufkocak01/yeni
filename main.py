@@ -1,8 +1,6 @@
 import os
 import boto3
 import requests
-import subprocess
-import tempfile
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -21,27 +19,19 @@ s3 = boto3.client(
     region_name="auto",
 )
 
-def download_drive(file_id, path):
+def get_drive_response(file_id):
     URL = "https://drive.google.com/uc?export=download"
     session = requests.Session()
     r = session.get(URL, params={"id": file_id}, stream=True)
 
+    # Büyük dosya confirm
     for k, v in r.cookies.items():
         if k.startswith("download_warning"):
             r = session.get(URL, params={"id": file_id, "confirm": v}, stream=True)
             break
 
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(1024 * 1024):
-            if chunk:
-                f.write(chunk)
-
-def extract_audio(video_path, audio_path):
-    subprocess.run([
-        "ffmpeg", "-i", video_path,
-        "-vn", "-acodec", "mp3",
-        audio_path
-    ], check=True)
+    r.raise_for_status()
+    return r
 
 @app.route("/transfer", methods=["POST"])
 def transfer_video():
@@ -49,30 +39,31 @@ def transfer_video():
     file_id = data.get("file_id")
     file_name = data.get("name", "video.mp4")
 
-    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
+    if not file_id:
+        return jsonify({"status": "error", "message": "file_id eksik"}), 400
 
-    video_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-    audio_tmp = video_tmp.replace(".mp4", ".mp3")
+    try:
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
+        r2_key = f"uploads/{safe_name}"
 
-    download_drive(file_id, video_tmp)
-    extract_audio(video_tmp, audio_tmp)
+        # Drive stream al
+        drive_response = get_drive_response(file_id)
 
-    video_key = f"uploads/{safe}"
-    audio_key = video_key.replace(".mp4", ".mp3")
+        # Direkt R2'ye akıt (requests raw → boto3)
+        s3.upload_fileobj(
+            drive_response.raw,
+            R2_BUCKET_NAME,
+            r2_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
 
-    s3.upload_file(video_tmp, R2_BUCKET_NAME, video_key, ExtraArgs={"ContentType": "video/mp4"})
-    s3.upload_file(audio_tmp, R2_BUCKET_NAME, audio_key, ExtraArgs={"ContentType": "audio/mpeg"})
+        public_url = f"{R2_PUBLIC_DOMAIN.rstrip('/')}/{r2_key}"
 
-    os.unlink(video_tmp)
-    os.unlink(audio_tmp)
+        return jsonify({"status": "success", "video_url": public_url}), 200
 
-    base = R2_PUBLIC_DOMAIN.rstrip("/")
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-    return jsonify({
-        "status": "success",
-        "video_url": f"{base}/{video_key}",
-        "audio_url": f"{base}/{audio_key}"
-    }), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
