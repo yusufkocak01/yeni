@@ -31,8 +31,8 @@ def transfer_video():
     try:
         # 1. Google Drive'dan İndir (Klasör dışarıya açık olduğu için anahtar gerekmez)
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        # Google'ın doğrudan indirme (proxy) link formatı
-drive_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+       # main.py içindeki ilgili satırı bununla değiştir:
+drive_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={os.environ.get('GOOGLE_API_KEY')}"
         
         with requests.get(drive_url, stream=True) as r:
             r.raise_for_status()
