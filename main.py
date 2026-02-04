@@ -1,16 +1,19 @@
-import os, boto3, requests, tempfile
+import os
+import boto3
+import requests
+import tempfile
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# R2 Ayarları (Railway Variables kısmından çekilir)
+# ENV
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")
 R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL")
 R2_PUBLIC_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN")
 
-# R2 (S3) Bağlantısı
+# R2 bağlantısı
 s3 = boto3.client(
     service_name='s3',
     endpoint_url=R2_ENDPOINT_URL,
@@ -19,54 +22,72 @@ s3 = boto3.client(
     region_name='auto'
 )
 
+# Google Drive büyük dosya indirme (confirm token destekli)
+def download_from_drive(file_id, destination):
+    URL = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
+
+    response = session.get(URL, params={'id': file_id}, stream=True)
+
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            params = {'id': file_id, 'confirm': value}
+            response = session.get(URL, params=params, stream=True)
+            break
+
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(32768):
+            if chunk:
+                f.write(chunk)
+
 @app.route("/transfer", methods=["POST"])
 def transfer_video():
     data = request.json
     file_id = data.get("file_id")
-    file_name = data.get("name")
+    file_name = data.get("name", "video.mp4")
 
     if not file_id:
         return jsonify({"status": "error", "message": "file_id eksik"}), 400
 
     try:
-        # 1. Google Drive'dan İndir (Klasör dışarıya açık olduğu için anahtar gerekmez)
+        # Geçici dosya oluştur
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-       # main.py içindeki ilgili satırı bununla değiştir:
-drive_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={os.environ.get('GOOGLE_API_KEY')}"
-        
-        with requests.get(drive_url, stream=True) as r:
-            r.raise_for_status()
-            with open(temp_file.name, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk: f.write(chunk)
+        temp_path = temp_file.name
+        temp_file.close()
 
-        # 2. R2'ye Yükle
-        # Dosya ismini güvenli hale getiriyoruz
+        # 1. Drive'dan indir
+        download_from_drive(file_id, temp_path)
+
+        # 2. Dosya adını güvenli hale getir
         safe_name = "".join([c if c.isalnum() or c in "._-" else "_" for c in file_name])
-        r2_file_path = f"uploads/{safe_name}"
-        
+        r2_path = f"uploads/{safe_name}"
+
+        # 3. R2'ye yükle
         s3.upload_file(
-            temp_file.name, 
-            str(R2_BUCKET_NAME), 
-            r2_file_path, 
+            temp_path,
+            R2_BUCKET_NAME,
+            r2_path,
             ExtraArgs={'ContentType': 'video/mp4'}
         )
 
-        # 3. Geçici Dosyayı Sil
-        os.unlink(temp_file.name)
+        # 4. Temp sil
+        os.unlink(temp_path)
 
-        # 4. Make'e Linki Gönder
-        base_url = str(R2_PUBLIC_DOMAIN).rstrip('/')
-        public_url = f"{base_url}/{r2_file_path}"
-        
+        # 5. Public URL üret
+        base = R2_PUBLIC_DOMAIN.rstrip("/")
+        public_url = f"{base}/{r2_path}"
+
         return jsonify({
-            "status": "success", 
-            "video_url": public_url,
-            "file_name": safe_name
+            "status": "success",
+            "video_url": public_url
         }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
