@@ -20,20 +20,16 @@ s3 = boto3.client(
     region_name="auto",
 )
 
+# Google Drive GERÇEK dosya indirme
 def download_drive(file_id, path):
-    URL = "https://drive.google.com/uc?export=download"
-    session = requests.Session()
-    r = session.get(URL, params={"id": file_id}, stream=True)
+    url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download"
 
-    for k, v in r.cookies.items():
-        if k.startswith("download_warning"):
-            r = session.get(URL, params={"id": file_id, "confirm": v}, stream=True)
-            break
-
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(1024 * 1024):
-            if chunk:
-                f.write(chunk)
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in r.iter_content(1024 * 1024):
+                if chunk:
+                    f.write(chunk)
 
 @app.route("/transfer", methods=["POST"])
 def transfer_video():
@@ -41,18 +37,22 @@ def transfer_video():
     file_id = data.get("file_id")
     file_name = data.get("name", "video.mp4")
 
-    try:
-        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
-        r2_key = f"uploads/{safe}"
+    if not file_id:
+        return jsonify({"status": "error", "message": "file_id eksik"}), 400
 
+    try:
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
+        r2_key = f"uploads/{safe_name}"
+
+        # Geçici dosya
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tmp_path = tmp.name
         tmp.close()
 
-        # Drive'dan indir
+        # Drive'dan GERÇEK mp4 indir
         download_drive(file_id, tmp_path)
 
-        # R2'ye yükle (gerçek mp4)
+        # R2'ye yükle
         s3.upload_file(
             tmp_path,
             R2_BUCKET_NAME,
