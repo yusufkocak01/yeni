@@ -1,16 +1,14 @@
 import os, boto3, requests, tempfile
 from flask import Flask, request, jsonify
-from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
-# Railway Variables'dan çekilecek ayarlar
+# R2 Ayarları (Railway Variables kısmından çekilir)
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")
 R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL")
 R2_PUBLIC_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # R2 (S3) Bağlantısı
 s3 = boto3.client(
@@ -31,9 +29,10 @@ def transfer_video():
         return jsonify({"status": "error", "message": "file_id eksik"}), 400
 
     try:
-        # 1. Drive'dan Geçici Olarak İndir
+        # 1. Google Drive'dan İndir (Klasör dışarıya açık olduğu için anahtar gerekmez)
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        drive_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_API_KEY}"
+        # Google Drive doğrudan indirme linki formatı
+        drive_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
         
         with requests.get(drive_url, stream=True) as r:
             r.raise_for_status()
@@ -42,7 +41,7 @@ def transfer_video():
                     if chunk: f.write(chunk)
 
         # 2. R2'ye Yükle
-        # Dosya ismindeki boşlukları ve Türkçe karakterleri temizlemek güvenli olur
+        # Dosya ismini güvenli hale getiriyoruz
         safe_name = "".join([c if c.isalnum() or c in "._-" else "_" for c in file_name])
         r2_file_path = f"uploads/{safe_name}"
         
@@ -53,11 +52,10 @@ def transfer_video():
             ExtraArgs={'ContentType': 'video/mp4'}
         )
 
-        # 3. Geçici Dosyayı Yerden Kazanmak İçin Sil
+        # 3. Geçici Dosyayı Sil
         os.unlink(temp_file.name)
 
-        # 4. Make'e Linki Döndür (200 OK)
-        # Public Domain sonunda / varsa temizleyelim
+        # 4. Make'e Linki Gönder
         base_url = str(R2_PUBLIC_DOMAIN).rstrip('/')
         public_url = f"{base_url}/{r2_file_path}"
         
@@ -71,6 +69,5 @@ def transfer_video():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    # Railway'in atadığı PORT üzerinden çalıştır
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
