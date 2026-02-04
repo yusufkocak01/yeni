@@ -4,15 +4,15 @@ from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
-# Ayarlar (Railway Variables kısmına girmelisin)
+# Railway Variables'dan çekilecek ayarlar
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")
-R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL") # https://<hesapid>.r2.cloudflarestorage.com
-R2_PUBLIC_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN") # https://pub-xxx.r2.dev (veya kendi domainin)
+R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL")
+R2_PUBLIC_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# R2 Bağlantısı
+# R2 (S3) Bağlantısı
 s3 = boto3.client(
     service_name='s3',
     endpoint_url=R2_ENDPOINT_URL,
@@ -28,7 +28,7 @@ def transfer_video():
     file_name = data.get("name")
 
     if not file_id:
-        return jsonify({"error": "file_id eksik"}), 400
+        return jsonify({"status": "error", "message": "file_id eksik"}), 400
 
     try:
         # 1. Drive'dan Geçici Olarak İndir
@@ -36,21 +36,41 @@ def transfer_video():
         drive_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_API_KEY}"
         
         with requests.get(drive_url, stream=True) as r:
+            r.raise_for_status()
             with open(temp_file.name, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk: f.write(chunk)
 
         # 2. R2'ye Yükle
-        r2_file_path = f"uploads/{file_name}"
-        s3.upload_file(temp_file.name, R2_BUCKET_NAME, r2_file_path, ExtraArgs={'ContentType': 'video/mp4'})
-
-        # 3. Geçici Dosyayı Sil ve Linki Dön
-        os.unlink(temp_file.name)
-        public_url = f"{R2_PUBLIC_DOMAIN}/{r2_file_path}"
+        # Dosya ismindeki boşlukları ve Türkçe karakterleri temizlemek güvenli olur
+        safe_name = "".join([c if c.isalnum() or c in "._-" else "_" for c in file_name])
+        r2_file_path = f"uploads/{safe_name}"
         
-        return jsonify({"status": "success", "video_url": public_url}), 200
+        s3.upload_file(
+            temp_file.name, 
+            str(R2_BUCKET_NAME), 
+            r2_file_path, 
+            ExtraArgs={'ContentType': 'video/mp4'}
+        )
+
+        # 3. Geçici Dosyayı Yerden Kazanmak İçin Sil
+        os.unlink(temp_file.name)
+
+        # 4. Make'e Linki Döndür (200 OK)
+        # Public Domain sonunda / varsa temizleyelim
+        base_url = str(R2_PUBLIC_DOMAIN).rstrip('/')
+        public_url = f"{base_url}/{r2_file_path}"
+        
+        return jsonify({
+            "status": "success", 
+            "video_url": public_url,
+            "file_name": safe_name
+        }), 200
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Railway'in atadığı PORT üzerinden çalıştır
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
