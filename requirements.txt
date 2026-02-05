@@ -1,4 +1,2 @@
-flask
-boto3
-requests
-gunicorn
+openai
+ffmpeg-python
